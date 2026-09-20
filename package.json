@@ -9,6 +9,8 @@
     "check-types": "turbo run check-types"
   },
   "devDependencies": {
+    "@nestjs/schematics": "^12.0.3",
+    "@nestjs/testing": "^12.0.3",
     "prettier": "3.9.6",
     "turbo": "^2.11.2",
     "typescript": "7.0.2"
