@@ -57,6 +57,18 @@ Detection is handled by the static/AST analysis and ML layers. The AI layer is r
 * uv
 * Machine-learning inference pipeline
 
+### Security Engine
+
+* Python
+* FastAPI
+* uv
+* Static/AST security analysis
+* Custom security analysis
+* External SAST integration
+* Detection result normalization
+
+> The specific SAST tools, parser technologies, data-flow mechanisms, and custom-rule architecture are not finalized yet. These decisions will follow cybersecurity research and team review.
+
 ### Monorepo
 
 * pnpm
@@ -70,18 +82,19 @@ Detection is handled by the static/AST analysis and ML layers. The AI layer is r
 VulnGuardian/
 │
 ├── apps/
-│   ├── web/              # React frontend
-│   ├── api/              # NestJS backend
-│   └── ml-service/       # Python + FastAPI ML service
+│   ├── web/                  # React frontend
+│   ├── api/                  # NestJS backend
+│   ├── ml-service/           # Python + FastAPI ML service
+│   └── security-engine/      # Python + FastAPI security analysis engine
 │
 ├── packages/
-│   ├── types/            # Shared TypeScript types
-│   ├── eslint-config/    # Shared ESLint configuration
-│   └── typescript-config/# Shared TypeScript configuration
+│   ├── types/                # Shared TypeScript types
+│   ├── eslint-config/        # Shared ESLint configuration
+│   └── typescript-config/    # Shared TypeScript configuration
 │
-├── infrastructure/       # Infrastructure and deployment configuration
+├── infrastructure/           # Infrastructure and deployment configuration
 │
-├── docs/                 # Project documentation
+├── docs/                     # Project documentation
 │
 ├── docker-compose.yml
 ├── pnpm-workspace.yaml
@@ -123,7 +136,9 @@ Install the following:
 * pnpm
 * Python 3.12+
 * uv
-* PostgreSQL
+* Docker Desktop
+
+PostgreSQL is provided through the project's Docker infrastructure.
 
 Verify your installations:
 
@@ -132,6 +147,7 @@ node --version
 pnpm --version
 python --version
 uv --version
+docker --version
 ```
 
 ---
@@ -139,15 +155,42 @@ uv --version
 ## Clone the Repository
 
 ```bash
-git clone https://github.com/naveenjangid178/VulnGuardian
+git clone https://github.com/naveenjangid178/VulnGuardian.git
+
 cd VulnGuardian
 ```
 
-Install JavaScript/TypeScript dependencies:
+---
+
+## Install Dependencies
+
+Install the monorepo JavaScript/TypeScript dependencies from the repository root:
 
 ```bash
 pnpm install
 ```
+
+Python services manage their own environments with `uv`.
+
+### ML Service
+
+```bash
+cd apps/ml-service
+uv sync
+cd ../..
+```
+
+### Security Engine
+
+```bash
+cd apps/security-engine
+uv sync
+cd ../..
+```
+
+`uv sync` creates the service's local `.venv` and installs the dependencies declared by that service.
+
+Do **not** commit `.venv` directories.
 
 ---
 
@@ -155,7 +198,14 @@ pnpm install
 
 Create the required environment files for the services you are working on.
 
-Do **not** commit secrets, passwords, API keys, tokens, or production credentials.
+Do **not** commit:
+
+* Secrets
+* Passwords
+* API keys
+* JWT secrets
+* Access tokens
+* Production credentials
 
 Example:
 
@@ -176,7 +226,9 @@ From the repository root:
 pnpm dev
 ```
 
-Turborepo starts the development applications together.
+Turborepo starts the development applications that expose a `dev` script.
+
+Current development services include:
 
 ### Web
 
@@ -196,11 +248,50 @@ http://localhost:3000
 http://localhost:8000
 ```
 
-The ML service exposes a health endpoint:
+### Security Engine
+
+```text
+http://localhost:8001
+```
+
+The ML Service and Security Engine expose health endpoints:
 
 ```text
 GET /health
 ```
+
+The Security Engine also currently exposes the analysis endpoint:
+
+```text
+POST /analyze
+```
+
+The `/analyze` endpoint currently provides the analysis integration boundary and returns normalized detection results. Actual vulnerability detection will be implemented after the security-analysis architecture is finalized.
+
+---
+
+# Testing
+
+Run tests for a specific workspace with pnpm:
+
+```bash
+pnpm --filter security-engine test
+```
+
+The Security Engine can also be tested directly with:
+
+```bash
+cd apps/security-engine
+uv run pytest
+```
+
+Run a Turbo task for the Security Engine:
+
+```bash
+pnpm turbo run test --filter=security-engine
+```
+
+As additional applications introduce tests, the root Turborepo configuration can run their test tasks consistently.
 
 ---
 
@@ -210,27 +301,27 @@ VulnGuardian is developed incrementally.
 
 ```text
 Foundation
-    ↓
+   ↓
 Authentication
-    ↓
+   ↓
 Project Management
-    ↓
+   ↓
 Code Management + Monaco
-    ↓
+   ↓
 Static Analysis Engine
-    ↓
+   ↓
 ML Service
-    ↓
+   ↓
 Finding Correlation
-    ↓
+   ↓
 CWE / OWASP Mapping
-    ↓
+   ↓
 AI Security Mentor
-    ↓
+   ↓
 Dashboard + Reports
-    ↓
+   ↓
 Testing + Security
-    ↓
+   ↓
 Production Deployment
 ```
 
@@ -238,11 +329,64 @@ Each major stage should be integrated and stable before moving to the next stage
 
 ---
 
+# Security Engine Architecture
+
+The Security Engine is a dedicated analysis application within the monorepo.
+
+Its intended architecture is hybrid:
+
+```text
+Source Code
+     │
+     ▼
+Security Engine
+     │
+     ├── External SAST Analyzers
+     │
+     └── VulnGuardian Custom Analysis
+              │
+              ▼
+       Result Normalization
+              │
+              ▼
+       Detection Results
+```
+
+The specific SAST tools, parsers, AST technologies, data-flow mechanisms, and custom-rule architecture are intentionally not finalized yet.
+
+These decisions will be documented through the cybersecurity research phase.
+
+### Research Deliverable
+
+The cybersecurity team should document the analysis architecture in:
+
+```text
+docs/security-analysis.md
+```
+
+The research should cover:
+
+1. Objective
+2. Requirements
+3. Existing SAST Tool Evaluation
+4. Parser / AST Evaluation
+5. Data-flow / Taint Analysis
+6. Custom Rule Strategy
+7. Hybrid Architecture Proposal
+8. Detection Result Contract
+9. Execution / Integration Strategy
+10. Testing Strategy
+11. Security Considerations
+12. Recommendation
+13. Open Questions
+
+---
+
 # Development Rules
 
 ### 1. Keep the architecture modular
 
-New functionality should be implemented inside the appropriate application/module rather than creating unnecessary services.
+New functionality should be implemented inside the appropriate application or module rather than creating unnecessary services.
 
 ### 2. Treat source code as untrusted input
 
@@ -256,13 +400,19 @@ AI explanations should be based on actual findings produced by the analysis pipe
 
 Every reported vulnerability must originate from an actual analysis result.
 
-### 5. Preserve existing architecture
+### 5. Preserve the existing architecture
 
 Before adding a feature, understand the current implementation and integrate with the existing structure.
 
 ### 6. Keep changes focused
 
 Avoid unrelated refactoring when implementing a feature.
+
+### 7. Keep service dependencies isolated
+
+Node.js dependencies are managed through pnpm/Turborepo.
+
+Python service dependencies are managed independently through uv within each Python service.
 
 ---
 
@@ -297,7 +447,6 @@ Pull requests should be reviewed before merging into `main`.
 
 ---
 
-
 # Contributing
 
 Before starting work:
@@ -305,11 +454,12 @@ Before starting work:
 1. Pull the latest `main` branch.
 2. Create a feature branch.
 3. Understand the relevant module and architecture.
-4. Implement the assigned task.
-5. Test your changes.
-6. Commit with a clear message.
-7. Push your branch.
-8. Open a pull request.
+4. Install the dependencies required by that module.
+5. Implement the assigned task.
+6. Test your changes.
+7. Commit with a clear message.
+8. Push your branch.
+9. Open a pull request.
 
 Keep PRs focused on one logical feature or change.
 

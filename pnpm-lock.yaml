@@ -99,6 +99,8 @@ importers:
 
   apps/ml-service: {}
 
+  apps/security-engine: {}
+
   apps/web:
     dependencies:
       '@monaco-editor/react':
