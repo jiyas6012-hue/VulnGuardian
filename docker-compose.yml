@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: vulnguardian-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: vulnguardian
+      POSTGRES_PASSWORD: vulnguardian_dev
+      POSTGRES_DB: vulnguardian
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - vulnguardian_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  vulnguardian_postgres_data:

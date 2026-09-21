@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -10,4 +5,534 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum ProjectMemberRole {
+  OWNER
+  MEMBER
+}
+
+enum SourceType {
+  UPLOAD
+  GIT
+  GITHUB
+}
+
+enum ScanStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DetectorType {
+  STATIC
+  ML
+  SAST_RULE
+  AST
+}
+
+enum ReportFormat {
+  PDF
+  JSON
+}
+
+enum ReportStatus {
+  QUEUED
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+// ============================================================
+// USER
+// ============================================================
+
+model User {
+  id             String          @id @default(uuid())
+  email          String          @unique
+  passwordHash   String
+  name           String?
+  role           UserRole        @default(USER)
+
+  // Project ownership
+  ownedProjects  Project[]       @relation("ProjectOwner")
+
+  // Project membership
+  memberships    ProjectMember[]
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+// ============================================================
+// PROJECT
+// ============================================================
+
+model Project {
+  id             String           @id @default(uuid())
+  name           String
+  description    String?
+
+  // Project owner
+  ownerId        String
+  owner          User             @relation("ProjectOwner", fields: [ownerId], references: [id])
+
+  // Members
+  members        ProjectMember[]
+
+  // Source history
+  snapshots      SourceSnapshot[]
+
+  // Security scans
+  scans          Scan[]
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([ownerId])
+}
+
+// ============================================================
+// PROJECT MEMBERS
+// ============================================================
+
+model ProjectMember {
+  id             String            @id @default(uuid())
+
+  userId         String
+  projectId      String
+
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  role           ProjectMemberRole @default(MEMBER)
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  // A user can only belong to a project once
+  @@unique([userId, projectId])
+
+  @@index([userId])
+  @@index([projectId])
+}
+
+// ============================================================
+// SOURCE SNAPSHOT
+// ============================================================
+//
+// Every scan analyzes one immutable source snapshot.
+// PostgreSQL stores metadata.
+// MinIO/S3 stores the actual source archive/files.
+//
+
+model SourceSnapshot {
+  id             String         @id @default(uuid())
+
+  projectId      String
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Sequential version within a project
+  version        Int
+
+  // Where the source came from
+  sourceType     SourceType
+
+  // Object-storage location
+  storageKey     String
+
+  // Hash of the complete source snapshot
+  contentHash    String
+
+  // Present when source comes from Git/GitHub
+  commitSha      String?
+
+  // Files belonging to this snapshot
+  files          SourceFile[]
+
+  // Scans performed against this snapshot
+  scans          Scan[]
+
+  createdAt      DateTime       @default(now())
+
+  // Prevent duplicate versions inside a project
+  @@unique([projectId, version])
+
+  @@index([projectId])
+  @@index([contentHash])
+}
+
+// ============================================================
+// SOURCE FILE
+// ============================================================
+//
+// File metadata lives in PostgreSQL.
+// Actual source content lives in MinIO/S3.
+//
+
+model SourceFile {
+  id             String            @id @default(uuid())
+
+  snapshotId     String
+  snapshot       SourceSnapshot    @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  // Relative path inside the project
+  path           String
+
+  // js / ts / py
+  language       String
+
+  // File size in bytes
+  size           Int
+
+  // Hash of this individual file
+  contentHash    String
+
+  // Object-storage location
+  storageKey     String
+
+  // Detection results associated with this file
+  detections     DetectionResult[]
+
+  // Final findings associated with this file
+  findings       Finding[]
+
+  createdAt      DateTime          @default(now())
+
+  // A path can only occur once inside one snapshot
+  @@unique([snapshotId, path])
+
+  @@index([snapshotId])
+  @@index([contentHash])
+}
+
+// ============================================================
+// SCAN
+// ============================================================
+//
+// One Scan is the parent for the complete security analysis.
+// Detection stages are represented by DetectionResult.
+// Final correlated issues are represented by Finding.
+//
+
+model Scan {
+  id               String            @id @default(uuid())
+
+  projectId        String
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Exact immutable source version being analyzed
+  snapshotId       String
+  snapshot         SourceSnapshot    @relation(fields: [snapshotId], references: [id])
+
+  // Scan lifecycle
+  status           ScanStatus        @default(QUEUED)
+
+  // Versions used to make the scan reproducible
+  scannerVersion   String?
+  modelVersion     String?
+
+  startedAt        DateTime?
+  completedAt      DateTime?
+
+  // Raw detector outputs
+  detections       DetectionResult[]
+
+  // Correlated final findings
+  findings         Finding[]
+
+  // Generated reports
+  reports          Report[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([projectId])
+  @@index([snapshotId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// DETECTION RESULT
+// ============================================================
+//
+// Raw output from static analysis / AST / ML detectors.
+// These are NOT the final findings.
+//
+// Example:
+// STATIC detector -> possible SQL Injection
+// ML detector     -> possible SQL Injection
+//
+// Correlation consumes these results and creates Finding records.
+//
+
+model DetectionResult {
+  id              String         @id @default(uuid())
+
+  scanId          String
+  scan            Scan           @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  // Detection mechanism
+  detectorType    DetectorType
+
+  // Vulnerability category predicted/detected
+  vulnerabilityId String
+  vulnerability   Vulnerability  @relation(fields: [vulnerabilityId], references: [id])
+
+  // Exact source location
+  sourceFileId    String
+  sourceFile      SourceFile     @relation(fields: [sourceFileId], references: [id])
+
+  startLine       Int
+  startColumn     Int?
+  endLine         Int
+  endColumn       Int?
+
+  // Detector confidence, separate from severity
+  confidence      Float
+
+  // Detector-specific evidence/metadata
+  // Do NOT store complete source code here.
+  evidence        Json?
+
+  createdAt       DateTime       @default(now())
+
+  @@index([scanId])
+  @@index([vulnerabilityId])
+  @@index([sourceFileId])
+  @@index([detectorType])
+}
+
+// ============================================================
+// FINDING
+// ============================================================
+//
+// A Finding is the final correlated vulnerability result.
+// It is created after combining detection results.
+//
+
+model Finding {
+  id              String         @id @default(uuid())
+
+  scanId          String
+  scan            Scan           @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  // What vulnerability was found
+  vulnerabilityId String
+  vulnerability   Vulnerability  @relation(fields: [vulnerabilityId], references: [id])
+
+  // Where it was found
+  sourceFileId    String
+  sourceFile      SourceFile     @relation(fields: [sourceFileId], references: [id])
+
+  // Severity = security impact
+  // Confidence = confidence that detection is valid
+  severity        String
+  confidence      Float
+
+  // Monaco-compatible source location
+  startLine       Int
+  startColumn     Int?
+  endLine         Int
+  endColumn       Int?
+
+  // Correlation/detection evidence
+  // Do NOT store complete source code here.
+  evidence        Json?
+
+  // AI-generated explanation/remediation/learning content
+  aiFeedback      AIFeedback[]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([scanId])
+  @@index([vulnerabilityId])
+  @@index([sourceFileId])
+  @@index([severity])
+}
+
+// ============================================================
+// VULNERABILITY CATALOG
+// ============================================================
+//
+// Vulnerabilities are database records rather than enums.
+// This allows new vulnerability types to be added without
+// changing the database schema.
+//
+
+model Vulnerability {
+  id              String                @id @default(uuid())
+
+  name            String
+  slug            String                @unique
+  description     String?
+
+  // Detector results
+  detections      DetectionResult[]
+
+  // Final findings
+  findings        Finding[]
+
+  // CWE mappings
+  cweMappings     VulnerabilityCWE[]
+
+  // OWASP mappings
+  owaspMappings   VulnerabilityOWASP[]
+
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+}
+
+// ============================================================
+// CWE CATALOG
+// ============================================================
+
+model CWE {
+  id               String               @id @default(uuid())
+
+  // Example: CWE-89
+  identifier       String               @unique
+
+  name             String
+  description      String?
+
+  // Vulnerability mappings
+  vulnerabilities  VulnerabilityCWE[]
+
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+}
+
+// ============================================================
+// VULNERABILITY <-> CWE
+// ============================================================
+//
+// Many-to-many relationship.
+// One vulnerability can map to multiple CWEs.
+// One CWE can describe multiple vulnerabilities.
+//
+
+model VulnerabilityCWE {
+  vulnerabilityId  String
+  cweId            String
+
+  vulnerability    Vulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
+  cwe              CWE           @relation(fields: [cweId], references: [id], onDelete: Cascade)
+
+  @@id([vulnerabilityId, cweId])
+
+  @@index([cweId])
+}
+
+// ============================================================
+// OWASP CATEGORY CATALOG
+// ============================================================
+
+model OWASPCategory {
+  id               String                @id @default(uuid())
+
+  // Example: A03:2021
+  identifier       String                @unique
+
+  name             String
+  description      String?
+
+  // Vulnerability mappings
+  vulnerabilities  VulnerabilityOWASP[]
+
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+}
+
+// ============================================================
+// VULNERABILITY <-> OWASP
+// ============================================================
+//
+// Many-to-many relationship.
+//
+
+model VulnerabilityOWASP {
+  vulnerabilityId  String
+  owaspCategoryId  String
+
+  vulnerability    Vulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
+  owaspCategory    OWASPCategory @relation(fields: [owaspCategoryId], references: [id], onDelete: Cascade)
+
+  @@id([vulnerabilityId, owaspCategoryId])
+
+  @@index([owaspCategoryId])
+}
+
+// ============================================================
+// AI FEEDBACK
+// ============================================================
+//
+// AI is enrichment, NOT detection.
+//
+// A finding remains valid even when AI is unavailable.
+// AI feedback can be regenerated with another model/prompt version.
+//
+
+model AIFeedback {
+  id                String    @id @default(uuid())
+
+  findingId         String
+  finding           Finding   @relation(fields: [findingId], references: [id], onDelete: Cascade)
+
+  // Model and prompt version for reproducibility
+  model             String
+  promptVersion     String
+
+  // AI-generated educational/security content
+  explanation       String?
+  impact            String?
+  remediation       String?
+  learningFeedback  String?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([findingId])
+}
+
+// ============================================================
+// REPORT
+// ============================================================
+//
+// Report metadata is stored in PostgreSQL.
+// Actual generated PDF/JSON files can be stored in MinIO/S3.
+//
+
+model Report {
+  id             String        @id @default(uuid())
+
+  scanId         String
+  scan           Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  format         ReportFormat
+  status         ReportStatus  @default(QUEUED)
+
+  // MinIO/S3 object key
+  storageKey     String?
+
+  generatedAt    DateTime?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([scanId])
+  @@index([status])
 }
