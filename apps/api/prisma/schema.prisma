@@ -71,8 +71,23 @@ model User {
   // Project membership
   memberships    ProjectMember[]
 
+  refreshTokens RefreshToken[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // ============================================================
